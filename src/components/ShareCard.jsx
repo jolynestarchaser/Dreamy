@@ -25,15 +25,63 @@ export default function ShareCard({ ending, innerScore, outerScore, onReset }) {
         height: cardRef.current.offsetHeight,
       });
 
-      // Convert to data URL and force download as .png
-      const dataUrl = canvas.toDataURL('image/png');
-      const link = document.createElement('a');
       const fileName = `dream-game-${ending.titleEN.toLowerCase().replace(/\s+/g, '-')}.png`;
-      link.download = fileName;
-      link.href = dataUrl;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+
+      // Convert canvas to Blob (better Safari support than dataURL)
+      const blob = await new Promise((resolve) =>
+        canvas.toBlob(resolve, 'image/png')
+      );
+
+      if (!blob) throw new Error('Failed to create image blob');
+
+      // Strategy 1: Try Web Share API (works great on iOS Safari)
+      if (navigator.share && navigator.canShare) {
+        const file = new File([blob], fileName, { type: 'image/png' });
+        const shareData = { files: [file] };
+
+        if (navigator.canShare(shareData)) {
+          try {
+            await navigator.share(shareData);
+            setSaved(true);
+            setTimeout(() => setSaved(false), 3000);
+            return;
+          } catch (shareErr) {
+            // User cancelled share or share failed — fall through to other methods
+            if (shareErr.name === 'AbortError') {
+              // User cancelled, don't show error
+              return;
+            }
+          }
+        }
+      }
+
+      // Strategy 2: Blob URL download (works on Chrome, Firefox, desktop Safari)
+      const blobUrl = URL.createObjectURL(blob);
+
+      // Detect Safari (but not Chrome on iOS which reports as Safari)
+      const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+
+      if (isSafari) {
+        // Safari: open image in new tab — user can long-press / right-click to save
+        const newTab = window.open(blobUrl, '_blank');
+        if (!newTab) {
+          // Popup blocked — fallback to navigating current page
+          // This is a last resort; the user can press back to return
+          window.location.href = blobUrl;
+        }
+      } else {
+        // Chrome / Firefox: standard download via anchor
+        const link = document.createElement('a');
+        link.download = fileName;
+        link.href = blobUrl;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+
+      // Clean up blob URL after a short delay
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch (err) {
